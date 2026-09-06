@@ -2,14 +2,15 @@ import streamlit as st
 import requests
 import datetime
 
-# Ganti dengan Token Bot Anda yang asli
+# Gunakan Token API asli Anda
 BOT_TOKEN = "8893067990:AAFbbn0xxxXGyCYq5MpV760481spUMONqIg"
 
 st.set_page_config(page_title="Dashboard Report Telegram", layout="centered")
-st.title("📡 Live Report Tim Lapangan")
-st.markdown("Menampilkan foto dan laporan PM terbaru dari grup Telegram.")
+st.title("📡 Live Report PM Lapangan")
 
-# Fungsi untuk mengambil pesan terbaru dari Telegram
+# 1. Konfigurasi Filter Laporan (Bisa ditambah dengan kode area seperti "tarakan", "pangkalan bun")
+KATA_KUNCI_REPORT = ["done", "pm", "plk", "bkeminting"] 
+
 def get_telegram_updates():
     url = f"https://api.telegram.org/bot{BOT_TOKEN}/getUpdates"
     try:
@@ -21,7 +22,6 @@ def get_telegram_updates():
         st.error(f"Gagal terhubung ke Telegram: {e}")
     return []
 
-# Fungsi untuk mengubah File ID foto menjadi Link URL yang bisa dirender Streamlit
 def get_image_url(file_id):
     url = f"https://api.telegram.org/bot{BOT_TOKEN}/getFile?file_id={file_id}"
     try:
@@ -33,42 +33,56 @@ def get_image_url(file_id):
         return None
     return None
 
-# Menarik data
 updates = get_telegram_updates()
+laporan_valid = []
 
-if not updates:
-    st.info("Belum ada laporan baru di Telegram.")
-else:
-    # Membalik urutan agar pesan paling baru (last PM) muncul di paling atas
-    for item in reversed(updates):
+# 2. Proses Filtering Obrolan vs Laporan
+if updates:
+    for item in updates:
         msg = item.get("message") or item.get("channel_post")
         if not msg:
             continue
             
-        # Mengambil informasi dasar
+        # Ubah teks menjadi huruf kecil semua untuk mempermudah pengecekan
+        text = str(msg.get("text") or msg.get("caption") or "").lower()
+        
+        # Cek apakah pesan mengandung salah satu kata kunci di atas
+        if any(kata in text for kata in KATA_KUNCI_REPORT):
+            laporan_valid.append(msg)
+
+# 3. Menampilkan Akumulasi Laporan Tim
+st.metric(label="Total Report PM Masuk", value=len(laporan_valid), delta="Data ditarik hari ini")
+st.divider()
+
+if not laporan_valid:
+    st.info("Belum ada laporan PM yang sesuai kriteria hari ini.")
+else:
+    # Membalik urutan agar PM paling akhir (Last PM) berada di atas
+    for msg in reversed(laporan_valid):
         date_unix = msg.get("date")
         date_str = datetime.datetime.fromtimestamp(date_unix).strftime('%d/%m/%Y %H:%M:%S')
         sender = msg.get("from", {}).get("first_name", "Tim")
         
-        # Mengambil teks laporan atau caption foto
-        text = msg.get("text") or msg.get("caption") or "*(Hanya mengirim file tanpa keterangan)*"
+        # Menampilkan teks asli (huruf besar/kecil tetap sesuai aslinya)
+        text_asli = msg.get("text") or msg.get("caption") or "*(Tanpa keterangan)*"
         
-        # Membuat UI Card di Streamlit
         with st.container():
             st.markdown(f"**Pelapor:** {sender} | 🕒 {date_str}")
+            st.text(text_asli)
             
-            # Jika laporan berupa teks/checklist
-            st.text(text)
-            
-            # Jika laporan mengandung foto, cari foto dengan resolusi tertinggi (array terakhir)
             if "photo" in msg:
+                # Ambil foto dengan resolusi tertinggi
                 file_id = msg["photo"][-1]["file_id"]
                 img_url = get_image_url(file_id)
+                
                 if img_url:
-                    st.image(img_url, use_column_width=True)
+                    try:
+                        # 4. Perbaikan TypeError Streamlit Cloud
+                        st.image(img_url, use_container_width=True)
+                    except Exception:
+                        st.warning("⚠️ Gagal merender gambar ini dari server Telegram.")
             
-            st.divider()
+            st.markdown("---")
 
-# Tombol untuk memuat ulang data terbaru
 if st.button("🔄 Refresh Data"):
     st.rerun()
