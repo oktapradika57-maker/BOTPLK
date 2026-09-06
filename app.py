@@ -1,64 +1,74 @@
 import streamlit as st
-import pandas as pd
-import urllib.parse
+import requests
+import datetime
 
-st.set_page_config(page_title="Dashboard MBP", layout="wide")
+# Ganti dengan Token Bot Anda yang asli
+BOT_TOKEN = "8893067990:AAFbbn0xxxXGyCYq5MpV760481spUMONqIg"
 
-st.title("📊 MBP Quality Control Dashboard")
+st.set_page_config(page_title="Dashboard Report Telegram", layout="centered")
+st.title("📡 Live Report Tim Lapangan")
+st.markdown("Menampilkan foto dan laporan PM terbaru dari grup Telegram.")
 
-# Konfigurasi Akses Data
-sheet_id = "1CrupWIBU3NP49ORN3AxC6ave7SD01ds_odu7NVBOIoI"
-
-@st.cache_data(ttl=60)
-def load_data(sheet_name):
-    url = f"https://docs.google.com/spreadsheets/d/{sheet_id}/gviz/tq?tqx=out:csv&sheet={urllib.parse.quote(sheet_name)}"
+# Fungsi untuk mengambil pesan terbaru dari Telegram
+def get_telegram_updates():
+    url = f"https://api.telegram.org/bot{BOT_TOKEN}/getUpdates"
     try:
-        # Membaca data
-        df = pd.read_csv(url)
-        # Membersihkan nama kolom
-        df.columns = df.columns.str.strip()
-        # Membuang baris yang kosong sama sekali
-        df = df.dropna(how='all')
-        return df
+        response = requests.get(url)
+        data = response.json()
+        if data.get("ok"):
+            return data.get("result", [])
     except Exception as e:
+        st.error(f"Gagal terhubung ke Telegram: {e}")
+    return []
+
+# Fungsi untuk mengubah File ID foto menjadi Link URL yang bisa dirender Streamlit
+def get_image_url(file_id):
+    url = f"https://api.telegram.org/bot{BOT_TOKEN}/getFile?file_id={file_id}"
+    try:
+        response = requests.get(url).json()
+        if response.get("ok"):
+            file_path = response["result"]["file_path"]
+            return f"https://api.telegram.org/file/bot{BOT_TOKEN}/{file_path}"
+    except Exception:
         return None
+    return None
 
-# Pilih Sheet
-selected_sheet = st.sidebar.selectbox("Pilih Tab:", ["Sheet1", "Pivot Table 1"])
-df = load_data(selected_sheet)
+# Menarik data
+updates = get_telegram_updates()
 
-if df is not None:
-    st.sidebar.markdown("---")
-    cols = df.columns.tolist()
-    
-    # Pilih kolom untuk dihitung
-    rh_awal = st.sidebar.selectbox("Kolom RH Awal:", cols, index=0)
-    rh_akhir = st.sidebar.selectbox("Kolom RH Akhir:", cols, index=1)
-
-    # --- PENGAMANAN DATA (FIX ERROR) ---
-    df_clean = df.copy()
-    
-    # Mengonversi ke angka secara paksa. Jika teks, maka jadi NaN (Not a Number)
-    df_clean['Val_Awal'] = pd.to_numeric(df_clean[rh_awal], errors='coerce')
-    df_clean['Val_Akhir'] = pd.to_numeric(df_clean[rh_akhir], errors='coerce')
-    
-    # Menghitung Delta hanya jika kedua kolom berisi angka
-    df_clean['Delta RH'] = df_clean['Val_Akhir'] - df_clean['Val_Awal']
-    
-    # Menampilkan hanya baris yang datanya valid (membuang baris Total/Teks)
-    df_display = df_clean.dropna(subset=['Val_Awal', 'Val_Akhir'])
-
-    # --- LAYOUT DASHBOARD ---
-    col1, col2 = st.columns([1, 2])
-    
-    with col1:
-        st.subheader("Ringkasan")
-        st.metric("Total Data Valid", len(df_display))
-        st.metric("Rata-rata Delta", f"{df_display['Delta RH'].mean():.2f}")
-    
-    with col2:
-        st.subheader("Data Detail")
-        st.dataframe(df_display[['Val_Awal', 'Val_Akhir', 'Delta RH']], use_container_width=True)
-
+if not updates:
+    st.info("Belum ada laporan baru di Telegram.")
 else:
-    st.error("Gagal memuat data. Pastikan link Google Sheets Anda sudah diatur menjadi 'Anyone with the link' (Publik).")
+    # Membalik urutan agar pesan paling baru (last PM) muncul di paling atas
+    for item in reversed(updates):
+        msg = item.get("message") or item.get("channel_post")
+        if not msg:
+            continue
+            
+        # Mengambil informasi dasar
+        date_unix = msg.get("date")
+        date_str = datetime.datetime.fromtimestamp(date_unix).strftime('%d/%m/%Y %H:%M:%S')
+        sender = msg.get("from", {}).get("first_name", "Tim")
+        
+        # Mengambil teks laporan atau caption foto
+        text = msg.get("text") or msg.get("caption") or "*(Hanya mengirim file tanpa keterangan)*"
+        
+        # Membuat UI Card di Streamlit
+        with st.container():
+            st.markdown(f"**Pelapor:** {sender} | 🕒 {date_str}")
+            
+            # Jika laporan berupa teks/checklist
+            st.text(text)
+            
+            # Jika laporan mengandung foto, cari foto dengan resolusi tertinggi (array terakhir)
+            if "photo" in msg:
+                file_id = msg["photo"][-1]["file_id"]
+                img_url = get_image_url(file_id)
+                if img_url:
+                    st.image(img_url, use_column_width=True)
+            
+            st.divider()
+
+# Tombol untuk memuat ulang data terbaru
+if st.button("🔄 Refresh Data"):
+    st.rerun()
