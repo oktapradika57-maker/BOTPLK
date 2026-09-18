@@ -49,9 +49,10 @@ st.markdown("""
 # 2. CORE ENGINE: CLEANING & MERGING MULTI-SHEET
 # ==========================================
 @st.cache_data
-def load_and_process_data(file_uploaded, auto_schedule=True):
+def load_and_process_data(file_bytes, auto_schedule=True):
     try:
-        xls = pd.ExcelFile(file_uploaded)
+        # Gunakan BytesIO untuk keamanan pembacaan buffer file di Streamlit
+        xls = pd.ExcelFile(io.BytesIO(file_bytes))
         
         # --- Sheet BCP ---
         df_bcp = pd.DataFrame()
@@ -81,14 +82,13 @@ def load_and_process_data(file_uploaded, auto_schedule=True):
             df_sps['Kategori'] = 'SPS Visit'
             df_sps['Date Actual'] = pd.NaT
 
-        # Gabungkan Data Master
+        # Gabungkan Data Master secara aman
         master_df = pd.concat([df_bcp, df_sps], ignore_index=True)
         
         # Pembersihan Nominal Biaya (Murni Jutaan / Ratusan Ribu Rupiah)
         if 'Biaya' in master_df.columns:
             master_df['Biaya'] = pd.to_numeric(master_df['Biaya'], errors='coerce')
-            median_cost = master_df['Biaya'].median()
-            # Imputasi biaya yang kosong dengan median kategori agar RAB total akurat
+            median_cost = master_df['Biaya'].median() if not master_df['Biaya'].dropna().empty else 500000
             master_df['Biaya'] = master_df['Biaya'].fillna(median_cost).fillna(500000)
         else:
             master_df['Biaya'] = 500000
@@ -98,7 +98,7 @@ def load_and_process_data(file_uploaded, auto_schedule=True):
             master_df['Area/City'] = master_df['Area/City'].astype(str).str.upper().str.strip()
         if 'PIC Engineer' in master_df.columns:
             master_df['PIC Engineer'] = master_df['PIC Engineer'].astype(str).str.title().str.strip()
-            master_df['PIC Engineer'] = master_df['PIC Engineer'].replace(['Nan', '', 'Na'], 'Unassigned')
+            master_df['PIC Engineer'] = master_df['PIC Engineer'].replace(['Nan', '', 'Na', 'None'], 'Unassigned')
 
         # Status Tracking Berdasarkan Tanggal Actual
         if 'Date Actual' in master_df.columns:
@@ -108,7 +108,7 @@ def load_and_process_data(file_uploaded, auto_schedule=True):
             
         master_df['Status Progress'] = master_df['Date Actual'].apply(lambda x: 'Done (Selesai)' if pd.notnull(x) else 'Pending (On-Plan)')
 
-        # Penjadwalan Otomatis 90 Hari (3 Bulan) untuk Site yang Kosong/Plan Date Belum Ada
+        # Penjadwalan Otomatis 90 Hari (3 Bulan) untuk Site yang Kosong
         master_df['Plan Date'] = pd.to_datetime(master_df['Plan Date'], errors='coerce')
         if auto_schedule:
             mask_empty = master_df['Plan Date'].isna()
@@ -153,7 +153,9 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 if uploaded_file:
-    df = load_and_process_data(uploaded_file, auto_plan=auto_schedule)
+    # Ambil bytes dari file upload untuk menghindari TypeError buffer stream
+    file_bytes = uploaded_file.getvalue()
+    df = load_and_process_data(file_bytes, auto_plan=auto_schedule)
     
     if df is not None:
         # Metrik Utama
