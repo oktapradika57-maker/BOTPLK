@@ -45,7 +45,7 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # ==========================================
-# 2. CORE ENGINE: DATA PROCESSOR (Tanpa Cache untuk Menghindari TypeError)
+# 2. CORE ENGINE: DATA PROCESSOR
 # ==========================================
 def load_and_process_data(file_bytes, auto_schedule=True):
     try:
@@ -149,7 +149,9 @@ st.markdown("""
 
 if uploaded_file is not None:
     file_bytes = uploaded_file.read()
-    df = load_and_process_data(file_bytes, auto_plan=auto_schedule)
+    
+    # PERBAIKAN: auto_plan diganti menjadi auto_schedule
+    df = load_and_process_data(file_bytes, auto_schedule=auto_schedule)
     
     if df is not None and not df.empty:
         # Metrik Utama
