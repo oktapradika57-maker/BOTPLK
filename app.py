@@ -1,13 +1,12 @@
 import io
 from datetime import datetime, timedelta
-import pandas as pd
-import plotly.express as px
-import streamlit as st
-
 import openpyxl
 from openpyxl.chart import BarChart, PieChart, Reference
 from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
 from openpyxl.utils import get_column_letter
+import pandas as pd
+import plotly.express as px
+import streamlit as st
 
 # ==========================================
 # 1. KONFIGURASI HALAMAN & DESIGN SYSTEM
@@ -29,24 +28,24 @@ st.markdown(
     
     .hero-banner {
         background: linear-gradient(135deg, #0f172a 0%, #1e293b 100%);
-        padding: 30px 35px;
+        padding: 28px 32px;
         border-radius: 14px;
         color: white;
-        margin-bottom: 25px;
+        margin-bottom: 22px;
         box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.1);
     }
-    .hero-title { font-size: 28px; font-weight: 700; margin: 0; letter-spacing: -0.5px; }
-    .hero-subtitle { font-size: 14px; color: #94a3b8; margin-top: 5px; }
+    .hero-title { font-size: 26px; font-weight: 700; margin: 0; letter-spacing: -0.5px; }
+    .hero-subtitle { font-size: 13.5px; color: #94a3b8; margin-top: 6px; }
     
     div[data-testid="metric-container"] {
         background-color: #ffffff;
         border: 1px solid #e2e8f0;
-        padding: 18px 20px;
+        padding: 16px 18px;
         border-radius: 12px;
         box-shadow: 0 1px 3px rgba(0,0,0,0.02);
     }
-    div[data-testid="metric-container"] label { font-size: 13px; font-weight: 600; color: #64748b; }
-    div[data-testid="metric-container"] div { font-size: 22px; font-weight: 700; color: #0f172a; }
+    div[data-testid="metric-container"] label { font-size: 12px; font-weight: 600; color: #64748b; }
+    div[data-testid="metric-container"] div { font-size: 20px; font-weight: 700; color: #0f172a; }
 </style>
 """,
     unsafe_allow_html=True,
@@ -113,7 +112,7 @@ def load_and_process_data(file_bytes, auto_schedule=True):
     master_df = pd.concat([df_bcp, df_sps], ignore_index=True)
     master_df = master_df.dropna(subset=["Site ID"]).copy()
 
-    # Imputasi biaya kosong dengan median agar total RAB akurat
+    # Imputasi biaya kosong dengan median (minimal 500rb)
     median_cost = (
         master_df["Biaya"].median()
         if not master_df["Biaya"].dropna().empty
@@ -121,7 +120,7 @@ def load_and_process_data(file_bytes, auto_schedule=True):
     )
     master_df["Biaya"] = master_df["Biaya"].fillna(median_cost).fillna(500000)
 
-    # Standarisasi Teks Wilayah & Nama PIC
+    # Standarisasi Wilayah & PIC Engineer
     if "Area/City" in master_df.columns:
       master_df["Area/City"] = (
           master_df["Area/City"].astype(str).str.upper().str.strip()
@@ -134,12 +133,12 @@ def load_and_process_data(file_bytes, auto_schedule=True):
           ["Nan", "", "Na", "None"], "Unassigned"
       )
 
-    # Status Tracking Berdasarkan Tanggal Actual
+    # Status Tracking: Selesai HANYA jika Date Actual terisi
     master_df["Status Progress"] = master_df["Date Actual"].apply(
         lambda x: "Done (Selesai)" if pd.notnull(x) else "Pending (On-Plan)"
     )
 
-    # Penjadwalan Otomatis 90 Hari (3 Bulan) untuk Site yang Kosong
+    # Penjadwalan Otomatis untuk Plan Date yang Kosong
     if auto_schedule:
       mask_empty = master_df["Plan Date"].isna()
       if mask_empty.sum() > 0:
@@ -152,6 +151,10 @@ def load_and_process_data(file_bytes, auto_schedule=True):
         master_df.loc[mask_empty, "Plan Date"] = starts
 
     master_df["Plan End"] = master_df["Plan Date"] + pd.Timedelta(days=2)
+
+    # Kolom Tambahan: Grouping Plan Date (Periode Bulan)
+    master_df["Bulan Plan"] = master_df["Plan Date"].dt.strftime("%Y-%m (%b %Y)")
+
     return master_df
 
   except Exception as e:
@@ -166,7 +169,6 @@ def convert_df_to_excel(df):
   output = io.BytesIO()
   wb = openpyxl.Workbook()
 
-  # Definisi Palette Warna & Font
   NAVY_HEADER_FILL = PatternFill(
       start_color="0F172A", end_color="0F172A", fill_type="solid"
   )
@@ -186,11 +188,11 @@ def convert_df_to_excel(df):
       start_color="E2E8F0", end_color="E2E8F0", fill_type="solid"
   )
 
-  FONT_TITLE = Font(name="Segoe UI", size=15, bold=True, color="FFFFFF")
+  FONT_TITLE = Font(name="Segoe UI", size=14, bold=True, color="FFFFFF")
   FONT_SUBTITLE = Font(name="Segoe UI", size=9, italic=True, color="94A3B8")
-  FONT_HEADER = Font(name="Segoe UI", size=10, bold=True, color="FFFFFF")
-  FONT_SEC_HEADER = Font(name="Segoe UI", size=12, bold=True, color="0F172A")
-  FONT_KPI_NUM = Font(name="Segoe UI", size=15, bold=True, color="0F172A")
+  FONT_HEADER = Font(name="Segoe UI", size=9, bold=True, color="FFFFFF")
+  FONT_SEC_HEADER = Font(name="Segoe UI", size=11, bold=True, color="0F172A")
+  FONT_KPI_NUM = Font(name="Segoe UI", size=14, bold=True, color="0F172A")
   FONT_KPI_LABEL = Font(name="Segoe UI", size=8, bold=True, color="475569")
   FONT_BODY = Font(name="Segoe UI", size=9, color="0F172A")
   FONT_BOLD = Font(name="Segoe UI", size=9, bold=True, color="0F172A")
@@ -213,56 +215,42 @@ def convert_df_to_excel(df):
       horizontal="center", vertical="center", wrap_text=True
   )
 
-  # -------------------------------------------------------------
-  # TAB 1: EXECUTIVE DASHBOARD
-  # -------------------------------------------------------------
+  # --- TAB 1: EXECUTIVE DASHBOARD ---
   ws_dash = wb.active
   ws_dash.title = "📌 Executive Dashboard"
   ws_dash.views.sheetView[0].showGridLines = True
 
-  # Header Banner Block
+  # Header Banner
   for r in range(1, 3):
     for c in range(1, 11):
-      cell = ws_dash.cell(row=r, column=c)
-      cell.fill = NAVY_HEADER_FILL
+      ws_dash.cell(row=r, column=c).fill = NAVY_HEADER_FILL
 
   ws_dash.merge_cells("A1:J1")
   ws_dash.merge_cells("A2:J2")
 
-  ws_dash["A1"] = "EXECUTIVE OPERATIONS & WORKPLAN REPORT"
+  ws_dash["A1"] = "EXECUTIVE BCP & SPS VISIT OPERATIONS REPORT"
   ws_dash["A1"].font = FONT_TITLE
   ws_dash["A1"].alignment = ALIGN_LEFT
 
   ws_dash["A2"] = (
-      "Monitoring BCP & SPS Visit • Auto-Generated Analytics Summary"
+      "Monitoring Realisasi Project, Target Site, & Kontrol Anggaran"
   )
   ws_dash["A2"].font = FONT_SUBTITLE
   ws_dash["A2"].alignment = ALIGN_LEFT
 
-  ws_dash.row_dimensions[1].height = 24
-  ws_dash.row_dimensions[2].height = 18
-
-  # Hitung Metrik KPI
+  # Hitung Metrik Utama
   total_sites = len(df)
-  done_sites = (
-      len(df[df["Status Progress"] == "Done (Selesai)"])
-      if "Status Progress" in df.columns
-      else 0
-  )
+  done_sites = len(df[df["Status Progress"] == "Done (Selesai)"])
   progress_pct = (done_sites / total_sites) if total_sites > 0 else 0
-  total_rab = df["Biaya"].sum() if "Biaya" in df.columns else 0
-  actual_spent = (
-      df.loc[df["Status Progress"] == "Done (Selesai)", "Biaya"].sum()
-      if "Biaya" in df.columns and "Status Progress" in df.columns
-      else 0
-  )
+  total_rab = df["Biaya"].sum()
+  actual_spent = df.loc[df["Status Progress"] == "Done (Selesai)", "Biaya"].sum()
 
   kpis = [
       ("TOTAL TARGET SITE", total_sites, "0", "A", "B"),
       ("SITE DONE (SELESAI)", done_sites, "0", "C", "D"),
       ("PROGRESS RATE", progress_pct, "0.0%", "E", "F"),
       ("TOTAL RAB PROJECT", total_rab, '"Rp "#,##0', "G", "H"),
-      ("REALISASI BIAYA", actual_spent, '"Rp "#,##0', "I", "J"),
+      ("REALISASI BIAYA (DONE)", actual_spent, '"Rp "#,##0', "I", "J"),
   ]
 
   for title, val, num_fmt, col_start, col_end in kpis:
@@ -288,12 +276,128 @@ def convert_df_to_excel(df):
         c_idx = openpyxl.utils.column_index_from_string(col_letter)
         ws_dash.cell(row=r, column=c_idx).border = THIN_BORDER
 
-  ws_dash.row_dimensions[4].height = 18
-  ws_dash.row_dimensions[5].height = 26
-
-  # Tabel Summary 1: Beban Kerja PIC
-  ws_dash["A7"] = "📊 Summary Beban Kerja PIC / Engineer"
+  # --- Tabel Summary 1: Breakdown BCP vs SPS Visit ---
+  ws_dash["A7"] = "📌 Breakdown BCP Visit vs SPS Visit"
   ws_dash["A7"].font = FONT_SEC_HEADER
+
+  source_summary = (
+      df.groupby("Source Sheet")
+      .agg(
+          Total_Sites=("Site ID", "count"),
+          Done_Sites=(
+              "Status Progress",
+              lambda x: (x == "Done (Selesai)").sum(),
+          ),
+          Pending_Sites=(
+              "Status Progress",
+              lambda x: (x == "Pending (On-Plan)").sum(),
+          ),
+          Total_RAB=("Biaya", "sum"),
+          Realisasi_Biaya=(
+              "Biaya",
+              lambda x: x[
+                  df.loc[x.index, "Status Progress"] == "Done (Selesai)"
+              ].sum(),
+          ),
+      )
+      .reset_index()
+  )
+
+  source_headers = [
+      "Kategori Visit",
+      "Total Site",
+      "Site Done",
+      "Site Pending",
+      "Total RAB (Rp)",
+      "Realisasi Biaya (Rp)",
+  ]
+  for c_idx, h in enumerate(source_headers, start=1):
+    cell = ws_dash.cell(row=8, column=c_idx, value=h)
+    cell.font = FONT_HEADER
+    cell.fill = NAVY_HEADER_FILL
+    cell.alignment = ALIGN_HEADER
+    cell.border = THIN_BORDER
+
+  r_idx = 9
+  start_src_row = r_idx
+  for _, row in source_summary.iterrows():
+    fill = ZEBRA_FILL if r_idx % 2 == 0 else WHITE_FILL
+    ws_dash.cell(row=r_idx, column=1, value=row["Source Sheet"]).alignment = (
+        ALIGN_LEFT
+    )
+    ws_dash.cell(row=r_idx, column=2, value=row["Total_Sites"]).number_format = (
+        "#,##0"
+    )
+    ws_dash.cell(row=r_idx, column=3, value=row["Done_Sites"]).number_format = (
+        "#,##0"
+    )
+    ws_dash.cell(
+        row=r_idx, column=4, value=row["Pending_Sites"]
+    ).number_format = "#,##0"
+    ws_dash.cell(row=r_idx, column=5, value=row["Total_RAB"]).number_format = (
+        '"Rp "#,##0'
+    )
+    ws_dash.cell(
+        row=r_idx, column=6, value=row["Realisasi_Biaya"]
+    ).number_format = '"Rp "#,##0'
+
+    for c in range(1, 7):
+      cell = ws_dash.cell(row=r_idx, column=c)
+      cell.font = FONT_BODY
+      cell.fill = fill
+      cell.border = THIN_BORDER
+      if c in [2, 3, 4]:
+        cell.alignment = ALIGN_CENTER
+      elif c in [5, 6]:
+        cell.alignment = ALIGN_RIGHT
+    r_idx += 1
+
+  end_src_row = r_idx - 1
+  tot_src_row = r_idx
+  ws_dash.cell(row=tot_src_row, column=1, value="TOTAL").alignment = ALIGN_LEFT
+  ws_dash.cell(
+      row=tot_src_row,
+      column=2,
+      value=f"=SUM(B{start_src_row}:B{end_src_row})",
+  ).number_format = "#,##0"
+  ws_dash.cell(
+      row=tot_src_row,
+      column=3,
+      value=f"=SUM(C{start_src_row}:C{end_src_row})",
+  ).number_format = "#,##0"
+  ws_dash.cell(
+      row=tot_src_row,
+      column=4,
+      value=f"=SUM(D{start_src_row}:D{end_src_row})",
+  ).number_format = "#,##0"
+  ws_dash.cell(
+      row=tot_src_row,
+      column=5,
+      value=f"=SUM(E{start_src_row}:E{end_src_row})",
+  ).number_format = '"Rp "#,##0'
+  ws_dash.cell(
+      row=tot_src_row,
+      column=6,
+      value=f"=SUM(F{start_src_row}:F{end_src_row})",
+  ).number_format = '"Rp "#,##0'
+
+  for c in range(1, 7):
+    cell = ws_dash.cell(row=tot_src_row, column=c)
+    cell.font = FONT_BOLD
+    cell.fill = TOTAL_FILL
+    cell.border = DOUBLE_BOTTOM
+    if c in [2, 3, 4]:
+      cell.alignment = ALIGN_CENTER
+    elif c in [5, 6]:
+      cell.alignment = ALIGN_RIGHT
+
+  # --- Tabel Summary 2: Beban Kerja PIC ---
+  pic_start_row = tot_src_row + 3
+  ws_dash.cell(
+      row=pic_start_row - 1,
+      column=1,
+      value="👥 Summary Beban Kerja Personil (PIC)",
+  ).font = FONT_SEC_HEADER
 
   pic_summary = (
       df.groupby("PIC Engineer")
@@ -307,7 +411,13 @@ def convert_df_to_excel(df):
               "Status Progress",
               lambda x: (x == "Pending (On-Plan)").sum(),
           ),
-          Total_Budget=("Biaya", "sum"),
+          Total_RAB=("Biaya", "sum"),
+          Realisasi_Biaya=(
+              "Biaya",
+              lambda x: x[
+                  df.loc[x.index, "Status Progress"] == "Done (Selesai)"
+              ].sum(),
+          ),
       )
       .reset_index()
       .sort_values(by="Total_Sites", ascending=False)
@@ -318,188 +428,117 @@ def convert_df_to_excel(df):
       "Total Site",
       "Site Selesai",
       "Site Pending",
-      "Total Budget (Rp)",
+      "Total RAB (Rp)",
+      "Realisasi Biaya (Rp)",
   ]
   for c_idx, h in enumerate(pic_headers, start=1):
-    cell = ws_dash.cell(row=8, column=c_idx, value=h)
+    cell = ws_dash.cell(row=pic_start_row, column=c_idx, value=h)
     cell.font = FONT_HEADER
     cell.fill = NAVY_HEADER_FILL
     cell.alignment = ALIGN_HEADER
     cell.border = THIN_BORDER
 
-  ws_dash.row_dimensions[8].height = 22
-
-  row_idx = 9
-  start_pic_row = row_idx
+  r_idx = pic_start_row + 1
+  start_pic_row = r_idx
   for _, row in pic_summary.iterrows():
-    fill = ZEBRA_FILL if row_idx % 2 == 0 else WHITE_FILL
-    c1 = ws_dash.cell(row=row_idx, column=1, value=row["PIC Engineer"])
-    c2 = ws_dash.cell(row=row_idx, column=2, value=row["Total_Sites"])
-    c3 = ws_dash.cell(row=row_idx, column=3, value=row["Done_Sites"])
-    c4 = ws_dash.cell(row=row_idx, column=4, value=row["Pending_Sites"])
-    c5 = ws_dash.cell(row=row_idx, column=5, value=row["Total_Budget"])
+    fill = ZEBRA_FILL if r_idx % 2 == 0 else WHITE_FILL
+    ws_dash.cell(row=r_idx, column=1, value=row["PIC Engineer"]).alignment = (
+        ALIGN_LEFT
+    )
+    ws_dash.cell(row=r_idx, column=2, value=row["Total_Sites"]).number_format = (
+        "#,##0"
+    )
+    ws_dash.cell(row=r_idx, column=3, value=row["Done_Sites"]).number_format = (
+        "#,##0"
+    )
+    ws_dash.cell(
+        row=r_idx, column=4, value=row["Pending_Sites"]
+    ).number_format = "#,##0"
+    ws_dash.cell(row=r_idx, column=5, value=row["Total_RAB"]).number_format = (
+        '"Rp "#,##0'
+    )
+    ws_dash.cell(
+        row=r_idx, column=6, value=row["Realisasi_Biaya"]
+    ).number_format = '"Rp "#,##0'
 
-    for c in [c1, c2, c3, c4, c5]:
-      c.font = FONT_BODY
-      c.fill = fill
-      c.border = THIN_BORDER
+    for c in range(1, 7):
+      cell = ws_dash.cell(row=r_idx, column=c)
+      cell.font = FONT_BODY
+      cell.fill = fill
+      cell.border = THIN_BORDER
+      if c in [2, 3, 4]:
+        cell.alignment = ALIGN_CENTER
+      elif c in [5, 6]:
+        cell.alignment = ALIGN_RIGHT
+    r_idx += 1
 
-    c1.alignment = ALIGN_LEFT
-    c2.alignment = ALIGN_CENTER
-    c2.number_format = "#,##0"
-    c3.alignment = ALIGN_CENTER
-    c3.number_format = "#,##0"
-    c4.alignment = ALIGN_CENTER
-    c4.number_format = "#,##0"
-    c5.alignment = ALIGN_RIGHT
-    c5.number_format = '"Rp "#,##0'
-    row_idx += 1
-
-  end_pic_row = row_idx - 1
-  tot_row = row_idx
-  ws_dash.cell(row=tot_row, column=1, value="TOTAL").alignment = ALIGN_LEFT
+  end_pic_row = r_idx - 1
+  tot_pic_row = r_idx
+  ws_dash.cell(row=tot_pic_row, column=1, value="TOTAL").alignment = ALIGN_LEFT
   ws_dash.cell(
-      row=tot_row,
+      row=tot_pic_row,
       column=2,
       value=f"=SUM(B{start_pic_row}:B{end_pic_row})",
   ).number_format = "#,##0"
   ws_dash.cell(
-      row=tot_row,
+      row=tot_pic_row,
       column=3,
       value=f"=SUM(C{start_pic_row}:C{end_pic_row})",
   ).number_format = "#,##0"
   ws_dash.cell(
-      row=tot_row,
+      row=tot_pic_row,
       column=4,
       value=f"=SUM(D{start_pic_row}:D{end_pic_row})",
   ).number_format = "#,##0"
   ws_dash.cell(
-      row=tot_row,
+      row=tot_pic_row,
       column=5,
       value=f"=SUM(E{start_pic_row}:E{end_pic_row})",
   ).number_format = '"Rp "#,##0'
-
-  for c_idx in range(1, 6):
-    cell = ws_dash.cell(row=tot_row, column=c_idx)
-    cell.font = FONT_BOLD
-    cell.fill = TOTAL_FILL
-    cell.border = DOUBLE_BOTTOM
-    if c_idx in [2, 3, 4]:
-      cell.alignment = ALIGN_CENTER
-    elif c_idx == 5:
-      cell.alignment = ALIGN_RIGHT
-
-  # Tabel Summary 2: Sebaran Area
-  area_start_row = tot_row + 3
   ws_dash.cell(
-      row=area_start_row - 1,
-      column=1,
-      value="🗺️ Summary Sebaran Area & Anggaran",
-  ).font = FONT_SEC_HEADER
-
-  area_summary = (
-      df.groupby("Area/City")
-      .agg(Total_Sites=("Site ID", "count"), Total_Budget=("Biaya", "sum"))
-      .reset_index()
-      .sort_values(by="Total_Sites", ascending=False)
-  )
-
-  area_headers = ["Kabupaten / Area", "Jumlah Site", "Total Budget (Rp)"]
-  for c_idx, h in enumerate(area_headers, start=1):
-    cell = ws_dash.cell(row=area_start_row, column=c_idx, value=h)
-    cell.font = FONT_HEADER
-    cell.fill = NAVY_HEADER_FILL
-    cell.alignment = ALIGN_HEADER
-    cell.border = THIN_BORDER
-
-  ws_dash.row_dimensions[area_start_row].height = 22
-
-  r_idx = area_start_row + 1
-  start_area_row = r_idx
-  for _, row in area_summary.iterrows():
-    fill = ZEBRA_FILL if r_idx % 2 == 0 else WHITE_FILL
-    c1 = ws_dash.cell(row=r_idx, column=1, value=row["Area/City"])
-    c2 = ws_dash.cell(row=r_idx, column=2, value=row["Total_Sites"])
-    c3 = ws_dash.cell(row=r_idx, column=3, value=row["Total_Budget"])
-
-    for c in [c1, c2, c3]:
-      c.font = FONT_BODY
-      c.fill = fill
-      c.border = THIN_BORDER
-
-    c1.alignment = ALIGN_LEFT
-    c2.alignment = ALIGN_CENTER
-    c2.number_format = "#,##0"
-    c3.alignment = ALIGN_RIGHT
-    c3.number_format = '"Rp "#,##0'
-    r_idx += 1
-
-  end_area_row = r_idx - 1
-  tot_area_row = r_idx
-  ws_dash.cell(row=tot_area_row, column=1, value="TOTAL").alignment = ALIGN_LEFT
-  ws_dash.cell(
-      row=tot_area_row,
-      column=2,
-      value=f"=SUM(B{start_area_row}:B{end_area_row})",
-  ).number_format = "#,##0"
-  ws_dash.cell(
-      row=tot_area_row,
-      column=3,
-      value=f"=SUM(C{start_area_row}:C{end_area_row})",
+      row=tot_pic_row,
+      column=6,
+      value=f"=SUM(F{start_pic_row}:F{end_pic_row})",
   ).number_format = '"Rp "#,##0'
 
-  for c_idx in range(1, 4):
-    cell = ws_dash.cell(row=tot_area_row, column=c_idx)
+  for c in range(1, 7):
+    cell = ws_dash.cell(row=tot_pic_row, column=c)
     cell.font = FONT_BOLD
     cell.fill = TOTAL_FILL
     cell.border = DOUBLE_BOTTOM
-    if c_idx == 2:
+    if c in [2, 3, 4]:
       cell.alignment = ALIGN_CENTER
-    elif c_idx == 3:
+    elif c in [5, 6]:
       cell.alignment = ALIGN_RIGHT
 
-  # Grafik 1: Bar Chart PIC Workload
+  # Grafik Distribusi PIC Workload
   chart1 = BarChart()
   chart1.type = "col"
   chart1.style = 10
-  chart1.title = "Distribusi Site per PIC Engineer"
+  chart1.title = "Distribusi Workload per PIC Engineer"
   chart1.y_axis.title = "Jumlah Site"
-  chart1.x_axis.title = "PIC Engineer"
-
   data1 = Reference(
-      ws_dash, min_col=3, min_row=8, max_col=4, max_row=end_pic_row
+      ws_dash,
+      min_col=3,
+      min_row=pic_start_row,
+      max_col=4,
+      max_row=end_pic_row,
   )
-  cats1 = Reference(ws_dash, min_col=1, min_row=9, max_row=end_pic_row)
+  cats1 = Reference(
+      ws_dash, min_col=1, min_row=pic_start_row + 1, max_row=end_pic_row
+  )
   chart1.add_data(data1, titles_from_data=True)
   chart1.set_categories(cats1)
-  chart1.width, chart1.height = 16, 10
-  ws_dash.add_chart(chart1, "G7")
+  chart1.width, chart1.height = 15, 10
+  ws_dash.add_chart(chart1, "H7")
 
-  # Grafik 2: Pie Chart Regional Budget
-  chart2 = PieChart()
-  chart2.title = "Proporsi Anggaran per Wilayah"
-  data2 = Reference(
-      ws_dash, min_col=3, min_row=area_start_row, max_row=end_area_row
-  )
-  labels2 = Reference(
-      ws_dash, min_col=1, min_row=area_start_row + 1, max_row=end_area_row
-  )
-  chart2.add_data(data2, titles_from_data=True)
-  chart2.set_categories(labels2)
-  chart2.width, chart2.height = 14, 10
-  ws_dash.add_chart(chart2, "G21")
-
-  # Atur Lebar Kolom Dashboard
+  # Atur Lebar Kolom
   for col in ws_dash.columns:
     max_len = max(len(str(cell.value or "")) for cell in col)
     col_letter = get_column_letter(col[0].column)
     ws_dash.column_dimensions[col_letter].width = max(max_len + 4, 15)
 
-  ws_dash.column_dimensions["F"].width = 4
-
-  # -------------------------------------------------------------
-  # TAB 2: MASTER DATA REKAP
-  # -------------------------------------------------------------
+  # --- TAB 2: MASTER DATA REKAP ---
   ws_master = wb.create_sheet(title="📑 Master Data Rekap")
   ws_master.views.sheetView[0].showGridLines = True
 
@@ -511,12 +550,12 @@ def convert_df_to_excel(df):
       "Kategori",
       "Status Progress",
       "Plan Date",
+      "Bulan Plan",
       "Date Actual",
       "Biaya",
   ]
   available_cols = [c for c in cols_to_export if c in df.columns]
 
-  # Header Row
   for c_idx, col_name in enumerate(available_cols, start=1):
     cell = ws_master.cell(row=1, column=c_idx, value=col_name)
     cell.font = FONT_HEADER
@@ -526,7 +565,6 @@ def convert_df_to_excel(df):
 
   ws_master.row_dimensions[1].height = 25
 
-  # Data Rows
   for r_idx, (_, row) in enumerate(df[available_cols].iterrows(), start=2):
     fill = ZEBRA_FILL if r_idx % 2 == 0 else WHITE_FILL
     for c_idx, col_name in enumerate(available_cols, start=1):
@@ -549,7 +587,13 @@ def convert_df_to_excel(df):
         cell.value = float(val) if pd.notnull(val) else 0.0
         cell.number_format = '"Rp "#,##0'
         cell.alignment = ALIGN_RIGHT
-      elif col_name in ["Site ID", "Status Progress", "Source Sheet", "Kategori"]:
+      elif col_name in [
+          "Site ID",
+          "Status Progress",
+          "Source Sheet",
+          "Kategori",
+          "Bulan Plan",
+      ]:
         cell.value = str(val) if pd.notnull(val) else "-"
         cell.alignment = ALIGN_CENTER
       else:
@@ -571,7 +615,7 @@ def convert_df_to_excel(df):
 # 4. SIDEBAR CONTROLS
 # ==========================================
 with st.sidebar:
-  st.image("https://cdn-icons-png.flaticon.com/512/3135/3135715.png", width=45)
+  st.image("https://cdn-icons-png.flaticon.com/512/3135/3135715.png", width=42)
   st.markdown("### **Panel Kontrol Data**")
   uploaded_file = st.file_uploader(
       "📂 Unggah File Tracker (.xlsx)", type=["xlsx"]
@@ -579,8 +623,9 @@ with st.sidebar:
   auto_schedule = st.toggle("Aktifkan Auto-Scheduler (3 Bulan)", value=True)
   st.markdown("---")
   st.caption(
-      "Aplikasi ini otomatis menggabungkan sheet BCP dan SPS Visit, membersihkan"
-      " nominal RAB, dan menghitung beban kerja tim secara real-time."
+      "Aplikasi ini menggabungkan BCP Visit & SPS Visit, mengkalkulasi realisasi"
+      " biaya untuk site yang selesai, dan menyusun grouping plan secara"
+      " otomatis."
   )
 
 # ==========================================
@@ -590,7 +635,7 @@ st.markdown(
     """
 <div class="hero-banner">
     <div class="hero-title">Executive Operations & Workplan Dashboard</div>
-    <div class="hero-subtitle">Monitoring Terintegrasi BCP & SPS Visit • Analisis Beban Kerja Personil (PIC) & Realisasi Anggaran</div>
+    <div class="hero-subtitle">Monitoring Terintegrasi BCP & SPS Visit • Analisis Realisasi Biaya & Grouping Plan</div>
 </div>
 """,
     unsafe_allow_html=True,
@@ -601,43 +646,117 @@ if uploaded_file is not None:
   df = load_and_process_data(file_bytes, auto_schedule=auto_schedule)
 
   if df is not None and not df.empty:
+    # Calculation Metrik Keseluruhan
     total_sites = len(df)
     done_sites = len(df[df["Status Progress"] == "Done (Selesai)"])
+    pending_sites = len(df[df["Status Progress"] == "Pending (On-Plan)"])
     progress_rate = (done_sites / total_sites) * 100 if total_sites > 0 else 0
 
     total_rab = df["Biaya"].sum()
+    # Realisasi Biaya HANYA untuk site yang Done (Selesai)
     actual_spent = df.loc[
         df["Status Progress"] == "Done (Selesai)", "Biaya"
     ].sum()
 
-    col1, col2, col3, col4 = st.columns(4)
+    # --- RINGKASAN METRIK UTAMA ---
+    st.markdown("##### 📊 **Key Performance Indicators (KPI)**")
+    col1, col2, col3, col4, col5 = st.columns(5)
     col1.metric("Total Target Site", f"{total_sites} Sites")
     col2.metric(
-        "Site Selesai (Done)",
+        "Site Done (Selesai)",
         f"{done_sites} Sites",
         f"{progress_rate:.1f}% Progress",
     )
-    col3.metric("Total RAB Project", f"Rp {total_rab:,.0f}")
-    col4.metric("Realisasi Biaya Terserap", f"Rp {actual_spent:,.0f}")
+    col3.metric("Site Pending", f"{pending_sites} Sites")
+    col4.metric("Total RAB Project", f"Rp {total_rab:,.0f}")
+    col5.metric(
+        "Realisasi Biaya (Done)",
+        f"Rp {actual_spent:,.0f}",
+        f"{(actual_spent/total_rab*100) if total_rab>0 else 0:.1f}% Terserap",
+    )
+
+    st.markdown("---")
+
+    # --- METRIK BCP vs SPS VISIT ---
+    bcp_df = df[df["Source Sheet"] == "BCP Visit"]
+    sps_df = df[df["Source Sheet"] == "SPS Visit"]
+
+    bcp_done = len(bcp_df[bcp_df["Status Progress"] == "Done (Selesai)"])
+    bcp_pending = len(bcp_df[bcp_df["Status Progress"] == "Pending (On-Plan)"])
+    bcp_spent = bcp_df.loc[
+        bcp_df["Status Progress"] == "Done (Selesai)", "Biaya"
+    ].sum()
+
+    sps_done = len(sps_df[sps_df["Status Progress"] == "Done (Selesai)"])
+    sps_pending = len(sps_df[sps_df["Status Progress"] == "Pending (On-Plan)"])
+    sps_spent = sps_df.loc[
+        sps_df["Status Progress"] == "Done (Selesai)", "Biaya"
+    ].sum()
+
+    col_bcp, col_sps = st.columns(2)
+    with col_bcp:
+      st.info(
+          f"🔵 **BCP Visit**: **{len(bcp_df)}** Total Site | **{bcp_done}**"
+          f" Done | **{bcp_pending}** Pending\n\n*Realisasi Biaya: Rp"
+          f" {bcp_spent:,.0f}*"
+      )
+    with col_sps:
+      st.success(
+          f"🟢 **SPS Visit**: **{len(sps_df)}** Total Site | **{sps_done}**"
+          f" Done | **{sps_pending}** Pending\n\n*Realisasi Biaya: Rp"
+          f" {sps_spent:,.0f}*"
+      )
 
     st.write("<br>", unsafe_allow_html=True)
 
     tab1, tab2, tab3, tab4 = st.tabs([
-        "👥 Analisis Beban Kerja PIC",
-        "📅 Timeline & Gantt Chart",
-        "🗺️ Sebaran Area & Biaya",
-        "📑 Database & Download Excel",
+        "📌 Breakdown BCP/SPS & PIC Workload",
+        "📅 Grouping Plan & Timeline Schedule",
+        "🗺️ Sebaran Area & Anggaran",
+        "📑 Database & Download Report Excel",
     ])
 
     with tab1:
-      st.markdown(
-          "#### **Beban Kerja & Jumlah Site per Personil (PIC / Engineer)**"
-      )
-      st.caption(
-          "Mengetahui secara transparan berapa total site yang dipegang oleh"
-          " masing-masing personil, status pengerjaan, serta total anggaran."
+      st.markdown("#### **Breakdown Perbandingan BCP vs SPS Visit**")
+      source_summary = (
+          df.groupby("Source Sheet")
+          .agg(
+              Total_Sites=("Site ID", "count"),
+              Done_Sites=(
+                  "Status Progress",
+                  lambda x: (x == "Done (Selesai)").sum(),
+              ),
+              Pending_Sites=(
+                  "Status Progress",
+                  lambda x: (x == "Pending (On-Plan)").sum(),
+              ),
+              Total_RAB=("Biaya", "sum"),
+              Realisasi_Biaya=(
+                  "Biaya",
+                  lambda x: x[
+                      df.loc[x.index, "Status Progress"] == "Done (Selesai)"
+                  ].sum(),
+              ),
+          )
+          .reset_index()
       )
 
+      st.dataframe(
+          source_summary.rename(columns={
+              "Source Sheet": "Kategori Visit",
+              "Total_Sites": "Total Site",
+              "Done_Sites": "Site Selesai",
+              "Pending_Sites": "Site Pending",
+              "Total_RAB": "Total RAB (Rp)",
+              "Realisasi_Biaya": "Realisasi Biaya (Done) (Rp)",
+          }),
+          use_container_width=True,
+          hide_index=True,
+      )
+
+      st.markdown(
+          "#### **Beban Kerja & Realisasi Biaya per Personil (PIC / Engineer)**"
+      )
       pic_summary = (
           df.groupby("PIC Engineer")
           .agg(
@@ -650,7 +769,13 @@ if uploaded_file is not None:
                   "Status Progress",
                   lambda x: (x == "Pending (On-Plan)").sum(),
               ),
-              Total_Budget=("Biaya", "sum"),
+              Total_RAB=("Biaya", "sum"),
+              Realisasi_Biaya=(
+                  "Biaya",
+                  lambda x: x[
+                      df.loc[x.index, "Status Progress"] == "Done (Selesai)"
+                  ].sum(),
+              ),
           )
           .reset_index()
           .sort_values(by="Total_Sites", ascending=False)
@@ -660,7 +785,7 @@ if uploaded_file is not None:
           pic_summary,
           x="PIC Engineer",
           y=["Done_Sites", "Pending_Sites"],
-          title="Distribusi Jumlah Site Ditangani per Personil",
+          title="Distribusi Workload & Status Site per Personil",
           labels={
               "value": "Jumlah Site",
               "PIC Engineer": "Nama Personil (PIC)",
@@ -672,26 +797,72 @@ if uploaded_file is not None:
           },
           template="plotly_white",
       )
-      fig_pic.update_layout(xaxis_tickangle=-45, height=450)
+      fig_pic.update_layout(xaxis_tickangle=-45, height=420)
       st.plotly_chart(fig_pic, use_container_width=True)
 
-      st.markdown("##### Tabel Rincian Beban Kerja Personil")
       st.dataframe(
           pic_summary.rename(columns={
               "PIC Engineer": "Nama Personil (PIC)",
               "Total_Sites": "Total Site",
               "Done_Sites": "Site Selesai",
               "Pending_Sites": "Site Pending",
-              "Total_Budget": "Akumulasi Biaya (Rp)",
+              "Total_RAB": "Total RAB (Rp)",
+              "Realisasi_Biaya": "Realisasi Biaya (Done) (Rp)",
           }),
           use_container_width=True,
           hide_index=True,
       )
 
     with tab2:
-      st.markdown(
-          "#### **Jadwal Eksekusi Kerja 3 Bulan (90 Hari Kedepan)**"
+      st.markdown("#### **Grouping Plan Date (Target Bulanan)**")
+      group_plan = (
+          df.groupby(["Bulan Plan", "Source Sheet"])
+          .agg(
+              Total_Sites=("Site ID", "count"),
+              Done_Sites=(
+                  "Status Progress",
+                  lambda x: (x == "Done (Selesai)").sum(),
+              ),
+              Pending_Sites=(
+                  "Status Progress",
+                  lambda x: (x == "Pending (On-Plan)").sum(),
+              ),
+              Total_RAB=("Biaya", "sum"),
+          )
+          .reset_index()
+          .sort_values("Bulan Plan")
       )
+
+      fig_plan = px.bar(
+          group_plan,
+          x="Bulan Plan",
+          y="Total_Sites",
+          color="Source Sheet",
+          barmode="group",
+          title="Grouping Plan Target Site per Bulan",
+          labels={
+              "Total_Sites": "Jumlah Target Site",
+              "Bulan Plan": "Periode Plan Date",
+          },
+          template="plotly_white",
+      )
+      st.plotly_chart(fig_plan, use_container_width=True)
+
+      st.markdown("##### Tabel Grouping Plan")
+      st.dataframe(
+          group_plan.rename(columns={
+              "Bulan Plan": "Periode Plan Date",
+              "Source Sheet": "Kategori Visit",
+              "Total_Sites": "Target Site",
+              "Done_Sites": "Site Done",
+              "Pending_Sites": "Site Pending",
+              "Total_RAB": "RAB Target (Rp)",
+          }),
+          use_container_width=True,
+          hide_index=True,
+      )
+
+      st.markdown("#### **Timeline Schedule Gantt Chart**")
       df_plot = df.dropna(subset=["Plan Date"]).sort_values("Plan Date")
 
       if not df_plot.empty:
@@ -709,7 +880,7 @@ if uploaded_file is not None:
             template="plotly_white",
         )
         fig_gantt.update_yaxes(autorange="reversed")
-        fig_gantt.update_layout(height=600, margin=dict(t=20, b=20))
+        fig_gantt.update_layout(height=550, margin=dict(t=20, b=20))
         st.plotly_chart(fig_gantt, use_container_width=True)
 
     with tab3:
@@ -727,7 +898,7 @@ if uploaded_file is not None:
             x="Area/City",
             y="Jumlah",
             color="Status Progress",
-            title="Volume Pekerjaan per Kabupaten / Area",
+            title="Volume Pekerjaan per Area/Kabupaten",
             color_discrete_map={
                 "Done (Selesai)": "#10b981",
                 "Pending (On-Plan)": "#f59e0b",
@@ -744,7 +915,7 @@ if uploaded_file is not None:
             values="Biaya",
             names="Area/City",
             hole=0.4,
-            title="Proporsi Anggaran Berdasarkan Wilayah",
+            title="Proporsi Total RAB Berdasarkan Wilayah",
             template="plotly_white",
         )
         fig_pie.update_traces(
@@ -764,9 +935,6 @@ if uploaded_file is not None:
       df_display["Plan Date"] = (
           df_display["Plan Date"].dt.strftime("%d-%b-%Y").fillna("-")
       )
-      df_display["Plan End"] = (
-          df_display["Plan End"].dt.strftime("%d-%b-%Y").fillna("-")
-      )
 
       cols = [
           "Site ID",
@@ -776,22 +944,23 @@ if uploaded_file is not None:
           "Kategori",
           "Status Progress",
           "Plan Date",
+          "Bulan Plan",
           "Date Actual",
           "Biaya",
       ]
       available_cols = [c for c in cols if c in df_display.columns]
 
       st.dataframe(
-          df_display[available_cols], use_container_width=True, height=450
+          df_display[available_cols], use_container_width=True, height=420
       )
 
-      # Panggil fungsi generator Excel eksekutif
       excel_bytes = convert_df_to_excel(df)
       st.download_button(
           label="📥 Download Executive Report Excel (.xlsx)",
           data=excel_bytes,
           file_name=(
-              f"Executive_Report_BCP_SPS_{datetime.now().strftime('%Y%m%d_%H%M')}.xlsx"
+              "Executive_Report_BCP_SPS_"
+              f"{datetime.now().strftime('%Y%m%d_%H%M')}.xlsx"
           ),
           mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
           type="primary",
