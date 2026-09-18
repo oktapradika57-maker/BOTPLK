@@ -46,11 +46,12 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # ==========================================
-# 2. CORE ENGINE: ROBUST MULTI-SHEET CLEANING
+# 2. CORE ENGINE: CLEANING & MERGING MULTI-SHEET
 # ==========================================
 @st.cache_data
 def load_and_process_data(file_bytes, auto_schedule=True):
     try:
+        # Gunakan BytesIO untuk keamanan pembacaan buffer file di Streamlit
         xls = pd.ExcelFile(io.BytesIO(file_bytes))
         
         # --- Sheet BCP ---
@@ -66,11 +67,6 @@ def load_and_process_data(file_bytes, auto_schedule=True):
             df_bcp = df_bcp.rename(columns={k: v for k, v in bcp_map.items() if k in df_bcp.columns})
             df_bcp['Source Sheet'] = 'BCP Visit'
             
-            # Cleaning spesifik BCP
-            df_bcp['Biaya'] = pd.to_numeric(df_bcp['Biaya'], errors='coerce')
-            df_bcp['Plan Date'] = pd.to_datetime(df_bcp['Plan Date'], errors='coerce')
-            df_bcp['Date Actual'] = pd.to_datetime(df_bcp['Date Actual'], errors='coerce')
-
         # --- Sheet SPS Visit ---
         df_sps = pd.DataFrame()
         if 'SPS Visit' in xls.sheet_names:
@@ -85,29 +81,35 @@ def load_and_process_data(file_bytes, auto_schedule=True):
             df_sps['Source Sheet'] = 'SPS Visit'
             df_sps['Kategori'] = 'SPS Visit'
             df_sps['Date Actual'] = pd.NaT
-            
-            # Cleaning spesifik SPS
-            df_sps['Biaya'] = pd.to_numeric(df_sps['Biaya'], errors='coerce')
-            df_sps['Plan Date'] = pd.to_datetime(df_sps['Plan Date'], errors='coerce')
 
-        # Gabungkan Data Master secara aman setelah dibersihkan
+        # Gabungkan Data Master secara aman
         master_df = pd.concat([df_bcp, df_sps], ignore_index=True)
         
-        # Imputasi biaya kosong dengan median agar total RAB akurat (murni jutaan/ratusan ribu)
-        median_cost = master_df['Biaya'].median() if not master_df['Biaya'].dropna().empty else 500000
-        master_df['Biaya'] = master_df['Biaya'].fillna(median_cost).fillna(500000)
+        # Pembersihan Nominal Biaya (Murni Jutaan / Ratusan Ribu Rupiah)
+        if 'Biaya' in master_df.columns:
+            master_df['Biaya'] = pd.to_numeric(master_df['Biaya'], errors='coerce')
+            median_cost = master_df['Biaya'].median() if not master_df['Biaya'].dropna().empty else 500000
+            master_df['Biaya'] = master_df['Biaya'].fillna(median_cost).fillna(500000)
+        else:
+            master_df['Biaya'] = 500000
 
         # Standarisasi Teks Wilayah & Nama PIC
         if 'Area/City' in master_df.columns:
             master_df['Area/City'] = master_df['Area/City'].astype(str).str.upper().str.strip()
         if 'PIC Engineer' in master_df.columns:
             master_df['PIC Engineer'] = master_df['PIC Engineer'].astype(str).str.title().str.strip()
-            master_df['PIC Engineer'] = master_df['PIC Engineer'].replace(['Nan', '', 'Na', 'None', 'Nan'], 'Unassigned')
+            master_df['PIC Engineer'] = master_df['PIC Engineer'].replace(['Nan', '', 'Na', 'None'], 'Unassigned')
 
         # Status Tracking Berdasarkan Tanggal Actual
+        if 'Date Actual' in master_df.columns:
+            master_df['Date Actual'] = pd.to_datetime(master_df['Date Actual'], errors='coerce')
+        else:
+            master_df['Date Actual'] = pd.NaT
+            
         master_df['Status Progress'] = master_df['Date Actual'].apply(lambda x: 'Done (Selesai)' if pd.notnull(x) else 'Pending (On-Plan)')
 
-        # Penjadwalan Otomatis 90 Hari (3 Bulan) untuk Site yang Plan Date-nya Kosong
+        # Penjadwalan Otomatis 90 Hari (3 Bulan) untuk Site yang Kosong
+        master_df['Plan Date'] = pd.to_datetime(master_df['Plan Date'], errors='coerce')
         if auto_schedule:
             mask_empty = master_df['Plan Date'].isna()
             if mask_empty.sum() > 0:
@@ -151,6 +153,7 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 if uploaded_file:
+    # Ambil bytes dari file upload untuk menghindari TypeError buffer stream
     file_bytes = uploaded_file.getvalue()
     df = load_and_process_data(file_bytes, auto_plan=auto_schedule)
     
@@ -194,6 +197,7 @@ if uploaded_file:
                 Total_Budget=('Biaya', 'sum')
             ).reset_index().sort_values(by='Total_Sites', ascending=False)
             
+            # Bar Chart PIC
             fig_pic = px.bar(
                 pic_summary, x='PIC Engineer', y=['Done_Sites', 'Pending_Sites'],
                 title="Distribusi Jumlah Site Ditangani per Personil",
@@ -273,6 +277,7 @@ if uploaded_file:
             
             st.dataframe(df_display[available_cols], use_container_width=True, height=450)
             
+            # Tombol Download Excel Otomatis Berfungsi
             excel_bytes = convert_df_to_excel(df)
             st.download_button(
                 label="📥 Download Master Rekap Project ke Excel (.xlsx)",
@@ -282,4 +287,4 @@ if uploaded_file:
                 type="primary"
             )
 else:
-    st.info("👈 **Silakan unggah file Excel Anda melalui panel di sebelah kiri** untuk menampilkan seluruh analisis dan grafik secara otomatis.")
+    st.info("👈 **Silakan unggah file Excel Anda (misal: BCP & SPS visit.xlsx) melalui panel di sebelah kiri** untuk menampilkan seluruh analisis dan grafik secara otomatis.")
