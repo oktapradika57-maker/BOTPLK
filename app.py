@@ -35,17 +35,14 @@ def apply_3_month_schedule(df):
         step_days = 90 / total_sites_to_plan
         starts = []
         for i in range(total_sites_to_plan):
-            # Hitung hari
             current_start = start_date + timedelta(days=int(i * step_days))
             starts.append(current_start)
             
-        # Isi ke dataframe (Start dan Asumsi End + 2 Hari)
         df.loc[mask_needs_plan, 'Plan Date'] = starts
         df['Plan End'] = df['Plan Date'] + pd.Timedelta(days=2) 
         
     return df
 
-# Helper Function: Download Excel
 def to_excel(df):
     output = io.BytesIO()
     with pd.ExcelWriter(output, engine='openpyxl') as writer:
@@ -53,47 +50,66 @@ def to_excel(df):
     return output.getvalue()
 
 # ==========================================
-# 3. UPLOAD FILE 
+# 3. UPLOAD FILE & DETEKSI KOLOM PINTAR
 # ==========================================
 st.sidebar.header("📁 Konfigurasi & Upload")
-uploaded_file = st.sidebar.file_uploader("Unggah File (BCP & SPS visit.xlsx)", type=["xlsx", "csv"])
+uploaded_file = st.sidebar.file_uploader("Unggah File (Excel/CSV)", type=["xlsx", "csv"])
 auto_schedule = st.sidebar.checkbox("Aktifkan Penjadwalan Otomatis (90 Hari)", value=True)
 
 if uploaded_file:
-    # Membaca data jika file diupload
-    if uploaded_file.name.endswith('.csv'):
-        df = pd.read_csv(uploaded_file)
-    else:
-        df = pd.read_excel(uploaded_file)
-        
-    # Standardisasi Nama Kolom (Karena dari snippet ada spasi ' Biaya Onsite ')
-    df.rename(columns=lambda x: x.strip(), inplace=True)
+    # 1. Membaca Data
+    try:
+        if uploaded_file.name.endswith('.csv'):
+            df = pd.read_csv(uploaded_file, sep=None, engine='python')
+        else:
+            df = pd.read_excel(uploaded_file)
+    except Exception as e:
+        st.error(f"Gagal membaca file: {e}")
+        st.stop()
+
+    # 2. Algoritma Pencarian Kolom (Anti-KeyError)
+    cols_lower = df.columns.str.lower().str.strip() # Normalisasi teks sementara
     
-    # Pastikan Kolom Biaya adalah Numerik (Bersihkan Rp/titik jika ada)
+    col_actual = next((c for c, lower in zip(df.columns, cols_lower) if 'actual' in lower), None)
+    col_plan = next((c for c, lower in zip(df.columns, cols_lower) if 'plan' in lower), None)
+    col_biaya = next((c for c, lower in zip(df.columns, cols_lower) if 'biaya' in lower), None)
+    col_site = next((c for c, lower in zip(df.columns, cols_lower) if 'site' in lower), None)
+    col_city = next((c for c, lower in zip(df.columns, cols_lower) if 'city' in lower or 'kota' in lower), None)
+
+    # Cek jika kolom vital benar-benar tidak ada di Excel
+    if not col_actual or not col_plan:
+        st.error(f"Sistem tidak dapat menemukan kolom Tanggal/Plan di excel Anda.")
+        st.info(f"Kolom yang terdeteksi di file Anda: {', '.join(df.columns.tolist())}")
+        st.stop()
+
+    # 3. Rename ke nama standar untuk di-proses program
+    df.rename(columns={
+        col_actual: 'Date Actual',
+        col_plan: 'Plan Date',
+        col_biaya: 'Biaya Onsite',
+        col_site: 'Site ID',
+        col_city: 'City'
+    }, inplace=True)
+
+    # 4. Standardisasi Kolom Biaya
     if 'Biaya Onsite' in df.columns:
         df['Biaya Onsite'] = df['Biaya Onsite'].astype(str).str.replace(r'\D', '', regex=True)
         df['Biaya Onsite'] = pd.to_numeric(df['Biaya Onsite'], errors='coerce').fillna(0)
     else:
         df['Biaya Onsite'] = 0
 
-    # 1. Bersihkan Kolom Tanggal Aktual
+    # 5. Konversi Waktu dan Labeling Status
     df['Date Actual'] = pd.to_datetime(df['Date Actual'], errors='coerce')
-
-    # 2. Set Status "Done" Jika Date Actual Ada Isinya
     df['Status Tracking'] = df['Date Actual'].apply(lambda x: 'Done' if pd.notnull(x) else 'Plan / Pending')
-    
-    # 3. Konversi format Plan Date sebelum Auto Plan
     df['Plan Date'] = pd.to_datetime(df['Plan Date'], errors='coerce')
-    
-    # 4. Buat Plan End awal dari Plan Date + 2 hari
     df['Plan End'] = df['Plan Date'] + pd.Timedelta(days=2) 
 
-    # 5. Jalankan Logic Auto-Plan
+    # 6. Jalankan Logika Auto-Plan 3 Bulan
     if auto_schedule:
         df = apply_3_month_schedule(df)
-        
+
     # ==========================================
-    # 4. HEADER KPI DASHBOARD
+    # 4. TAMPILAN DASHBOARD UTAMA
     # ==========================================
     total_sites = len(df)
     total_done = len(df[df['Status Tracking'] == 'Done'])
@@ -104,37 +120,29 @@ if uploaded_file:
     col2.metric("Site Selesai (Done)", total_done, f"{progress:.1f}% Progress")
     col3.metric("Estimasi Biaya Total", f"Rp {df['Biaya Onsite'].sum():,.0f}")
     
-    # Hitung Realisasi Berdasarkan Site yang DONE saja
     realisasi = df.loc[df['Status Tracking'] == 'Done', 'Biaya Onsite'].sum()
     col4.metric("Biaya Terserap (Done)", f"Rp {realisasi:,.0f}")
 
     st.markdown("---")
 
-    # ==========================================
-    # 5. PANEL VISUALISASI
-    # ==========================================
     tab1, tab2, tab3 = st.tabs(["📅 Gantt Chart Timeline", "🗺️ Sebaran Area", "📋 Database & Export"])
 
     with tab1:
         st.subheader("Distribusi SLA Eksekusi (3 Bulan)")
-        # Plotly tidak bisa plot NaT, drop sementara untuk visual
         df_plot = df.dropna(subset=['Plan Date']).copy()
-        
         if not df_plot.empty:
-            # Gunakan kolom 'Final' sebagai tipe pekerjaan (misal: BCP/SPS)
             fig_timeline = px.timeline(
                 df_plot, x_start="Plan Date", x_end="Plan End", y="Site ID", color="Status Tracking",
-                hover_data=["City", "TE NAME", "Final"], 
-                color_discrete_map={"Done": "#10B981", "Plan / Pending": "#F59E0B"},
+                color_discrete_map={"Done": "#10B981", "Plan / Pending": "#F59E0B"}
             )
             fig_timeline.update_yaxes(autorange="reversed")
             fig_timeline.update_layout(height=500)
             st.plotly_chart(fig_timeline, use_container_width=True)
         else:
-            st.warning("Tidak ada data jadwal valid untuk divisualisasikan.")
+            st.warning("Data timeline belum tersedia.")
 
     with tab2:
-        st.subheader("Sebaran Pekerjaan Berdasarkan Kabupaten/Kota")
+        st.subheader("Sebaran Pekerjaan Berdasarkan Area")
         if 'City' in df.columns:
             city_count = df.groupby(['City', 'Status Tracking']).size().reset_index(name='Jumlah Site')
             fig_city = px.bar(
@@ -143,12 +151,10 @@ if uploaded_file:
             )
             st.plotly_chart(fig_city, use_container_width=True)
         else:
-            st.info("Kolom 'City' tidak ditemukan dalam tabel.")
+            st.info("Kolom Area/City tidak ditemukan pada file.")
 
     with tab3:
         st.subheader("Database Tabel")
-        
-        # Display copy agar format datetime enak dibaca
         df_display = df.copy()
         df_display['Date Actual'] = df_display['Date Actual'].dt.strftime('%d-%b-%Y').fillna('Belum Selesai')
         df_display['Plan Date'] = df_display['Plan Date'].dt.strftime('%d-%b-%Y').fillna('No Plan')
@@ -156,13 +162,11 @@ if uploaded_file:
         
         st.dataframe(df_display, use_container_width=True, height=350)
         
-        # Tombol Unduh Otomatis Ke Excel
-        excel_file = to_excel(df)
         st.download_button(
             label="📥 Download Jadwal 3 Bulan ke Excel",
-            data=excel_file,
+            data=to_excel(df),
             file_name="Jadwal_BCP_SPS_Terupdate.xlsx",
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
         )
 else:
-    st.info("Silakan unggah file 'BCP & SPS visit.xlsx' Anda pada menu samping kiri untuk memulai.")
+    st.info("Silakan unggah file Excel Anda pada menu samping kiri untuk memulai.")
