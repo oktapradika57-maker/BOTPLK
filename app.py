@@ -1,7 +1,6 @@
 import streamlit as st
 import pandas as pd
 import plotly.express as px
-import plotly.graph_objects as go
 from datetime import datetime, timedelta
 import io
 
@@ -46,9 +45,8 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # ==========================================
-# 2. CORE ENGINE: ROBUST DATA PROCESSOR
+# 2. CORE ENGINE: DATA PROCESSOR (Tanpa Cache untuk Menghindari TypeError)
 # ==========================================
-@st.cache_data
 def load_and_process_data(file_bytes, auto_schedule=True):
     try:
         xls = pd.ExcelFile(io.BytesIO(file_bytes))
@@ -88,13 +86,11 @@ def load_and_process_data(file_bytes, auto_schedule=True):
             df_sps['Biaya'] = pd.to_numeric(df_sps['Biaya'], errors='coerce')
             df_sps['Plan Date'] = pd.to_datetime(df_sps['Plan Date'], errors='coerce')
 
-        # Gabungkan Data Master secara aman
+        # Gabungkan Data Master
         master_df = pd.concat([df_bcp, df_sps], ignore_index=True)
-        
-        # Bersihkan baris kosong total jika ada
         master_df = master_df.dropna(subset=['Site ID']).copy()
 
-        # Imputasi biaya kosong dengan median agar total RAB akurat (murni jutaan/ratusan ribu)
+        # Imputasi biaya kosong dengan median agar total RAB akurat
         median_cost = master_df['Biaya'].median() if not master_df['Biaya'].dropna().empty else 500000
         master_df['Biaya'] = master_df['Biaya'].fillna(median_cost).fillna(500000)
 
@@ -103,12 +99,12 @@ def load_and_process_data(file_bytes, auto_schedule=True):
             master_df['Area/City'] = master_df['Area/City'].astype(str).str.upper().str.strip()
         if 'PIC Engineer' in master_df.columns:
             master_df['PIC Engineer'] = master_df['PIC Engineer'].astype(str).str.title().str.strip()
-            master_df['PIC Engineer'] = master_df['PIC Engineer'].replace(['Nan', '', 'Na', 'None', 'Nan'], 'Unassigned')
+            master_df['PIC Engineer'] = master_df['PIC Engineer'].replace(['Nan', '', 'Na', 'None'], 'Unassigned')
 
         # Status Tracking Berdasarkan Tanggal Actual
         master_df['Status Progress'] = master_df['Date Actual'].apply(lambda x: 'Done (Selesai)' if pd.notnull(x) else 'Pending (On-Plan)')
 
-        # Penjadwalan Otomatis 90 Hari (3 Bulan) untuk Site yang Plan Date-nya Kosong
+        # Penjadwalan Otomatis 90 Hari (3 Bulan) untuk Site yang Kosong
         if auto_schedule:
             mask_empty = master_df['Plan Date'].isna()
             if mask_empty.sum() > 0:
@@ -151,145 +147,136 @@ st.markdown("""
 </div>
 """, unsafe_allow_html=True)
 
-# Proteksi aman untuk mengantisipasi file belum di-upload atau buffer kosong
 if uploaded_file is not None:
-    try:
-        file_bytes = uploaded_file.read()
-    except Exception:
-        uploaded_file.seek(0)
-        file_bytes = uploaded_file.getvalue()
+    file_bytes = uploaded_file.read()
+    df = load_and_process_data(file_bytes, auto_plan=auto_schedule)
+    
+    if df is not None and not df.empty:
+        # Metrik Utama
+        total_sites = len(df)
+        done_sites = len(df[df['Status Progress'] == 'Done (Selesai)'])
+        progress_rate = (done_sites / total_sites) * 100 if total_sites > 0 else 0
         
-    if file_bytes:
-        df = load_and_process_data(file_bytes, auto_plan=auto_schedule)
+        total_rab = df['Biaya'].sum()
+        actual_spent = df.loc[df['Status Progress'] == 'Done (Selesai)', 'Biaya'].sum()
         
-        if df is not None and not df.empty:
-            # Metrik Utama
-            total_sites = len(df)
-            done_sites = len(df[df['Status Progress'] == 'Done (Selesai)'])
-            progress_rate = (done_sites / total_sites) * 100 if total_sites > 0 else 0
+        # Render Kartu Metrik
+        col1, col2, col3, col4 = st.columns(4)
+        col1.metric("Total Target Site", f"{total_sites} Sites")
+        col2.metric("Site Selesai (Done)", f"{done_sites} Sites", f"{progress_rate:.1f}% Progress")
+        col3.metric("Total RAB Project", f"Rp {total_rab:,.0f}")
+        col4.metric("Realisasi Biaya Terserap", f"Rp {actual_spent:,.0f}")
+        
+        st.write("<br>", unsafe_allow_html=True)
+        
+        # ==========================================
+        # 5. TAB ANALISIS MENDALAM
+        # ==========================================
+        tab1, tab2, tab3, tab4 = st.tabs([
+            "👥 Analisis Beban Kerja PIC", 
+            "📅 Timeline & Gantt Chart", 
+            "🗺️ Sebaran Area & Biaya", 
+            "📑 Database & Download Excel"
+        ])
+        
+        # --- TAB 1: ANALISIS PIC / ENGINEER ---
+        with tab1:
+            st.markdown("#### **Beban Kerja & Jumlah Site per Personil (PIC / Engineer)**")
+            st.caption("Mengetahui secara transparan berapa total site yang dipegang oleh masing-masing personil, status pengerjaan, serta total anggaran.")
             
-            total_rab = df['Biaya'].sum()
-            actual_spent = df.loc[df['Status Progress'] == 'Done (Selesai)', 'Biaya'].sum()
+            pic_summary = df.groupby('PIC Engineer').agg(
+                Total_Sites=('Site ID', 'count'),
+                Done_Sites=('Status Progress', lambda x: (x == 'Done (Selesai)').sum()),
+                Pending_Sites=('Status Progress', lambda x: (x == 'Pending (On-Plan)').sum()),
+                Total_Budget=('Biaya', 'sum')
+            ).reset_index().sort_values(by='Total_Sites', ascending=False)
             
-            # Render Kartu Metrik
-            col1, col2, col3, col4 = st.columns(4)
-            col1.metric("Total Target Site", f"{total_sites} Sites")
-            col2.metric("Site Selesai (Done)", f"{done_sites} Sites", f"{progress_rate:.1f}% Progress")
-            col3.metric("Total RAB Project", f"Rp {total_rab:,.0f}")
-            col4.metric("Realisasi Biaya Terserap", f"Rp {actual_spent:,.0f}")
+            fig_pic = px.bar(
+                pic_summary, x='PIC Engineer', y=['Done_Sites', 'Pending_Sites'],
+                title="Distribusi Jumlah Site Ditangani per Personil",
+                labels={'value': 'Jumlah Site', 'PIC Engineer': 'Nama Personil (PIC)', 'variable': 'Status Pengerjaan'},
+                color_discrete_map={'Done_Sites': '#10b981', 'Pending_Sites': '#f59e0b'},
+                template='plotly_white'
+            )
+            fig_pic.update_layout(xaxis_tickangle=-45, height=450)
+            st.plotly_chart(fig_pic, use_container_width=True)
             
-            st.write("<br>", unsafe_allow_html=True)
-            
-            # ==========================================
-            # 5. TAB ANALISIS MENDALAM
-            # ==========================================
-            tab1, tab2, tab3, tab4 = st.tabs([
-                "👥 Analisis Beban Kerja PIC", 
-                "📅 Timeline & Gantt Chart", 
-                "🗺️ Sebaran Area & Biaya", 
-                "📑 Database & Download Excel"
-            ])
-            
-            # --- TAB 1: ANALISIS PIC / ENGINEER ---
-            with tab1:
-                st.markdown("#### **Beban Kerja & Jumlah Site per Personil (PIC / Engineer)**")
-                st.caption("Mengetahui secara transparan berapa total site yang dipegang oleh masing-masing personil, status pengerjaan, serta total anggaran.")
-                
-                pic_summary = df.groupby('PIC Engineer').agg(
-                    Total_Sites=('Site ID', 'count'),
-                    Done_Sites=('Status Progress', lambda x: (x == 'Done (Selesai)').sum()),
-                    Pending_Sites=('Status Progress', lambda x: (x == 'Pending (On-Plan)').sum()),
-                    Total_Budget=('Biaya', 'sum')
-                ).reset_index().sort_values(by='Total_Sites', ascending=False)
-                
-                fig_pic = px.bar(
-                    pic_summary, x='PIC Engineer', y=['Done_Sites', 'Pending_Sites'],
-                    title="Distribusi Jumlah Site Ditangani per Personil",
-                    labels={'value': 'Jumlah Site', 'PIC Engineer': 'Nama Personil (PIC)', 'variable': 'Status Pengerjaan'},
-                    color_discrete_map={'Done_Sites': '#10b981', 'Pending_Sites': '#f59e0b'},
-                    template='plotly_white'
-                )
-                fig_pic.update_layout(xaxis_tickangle=-45, height=450)
-                st.plotly_chart(fig_pic, use_container_width=True)
-                
-                st.markdown("##### Tabel Rincian Beban Kerja Personil")
-                st.dataframe(
-                    pic_summary.rename(columns={
-                        'PIC Engineer': 'Nama Personil (PIC)',
-                        'Total_Sites': 'Total Site',
-                        'Done_Sites': 'Site Selesai',
-                        'Pending_Sites': 'Site Pending',
-                        'Total_Budget': 'Akumulasi Biaya (Rp)'
-                    }), 
-                    use_container_width=True, 
-                    hide_index=True
-                )
+            st.markdown("##### Tabel Rincian Beban Kerja Personil")
+            st.dataframe(
+                pic_summary.rename(columns={
+                    'PIC Engineer': 'Nama Personil (PIC)',
+                    'Total_Sites': 'Total Site',
+                    'Done_Sites': 'Site Selesai',
+                    'Pending_Sites': 'Site Pending',
+                    'Total_Budget': 'Akumulasi Biaya (Rp)'
+                }), 
+                use_container_width=True, 
+                hide_index=True
+            )
 
-            # --- TAB 2: TIMELINE / GANTT CHART ---
-            with tab2:
-                st.markdown("#### **Jadwal Eksekusi Kerja 3 Bulan (90 Hari Kedepan)**")
-                df_plot = df.dropna(subset=['Plan Date']).sort_values('Plan Date')
-                
-                if not df_plot.empty:
-                    fig_gantt = px.timeline(
-                        df_plot, x_start="Plan Date", x_end="Plan End", y="Site ID", color="Status Progress",
-                        hover_data=["Area/City", "PIC Engineer", "Source Sheet", "Biaya"],
-                        color_discrete_map={"Done (Selesai)": "#10b981", "Pending (On-Plan)": "#3b82f6"},
-                        template="plotly_white"
-                    )
-                    fig_gantt.update_yaxes(autorange="reversed")
-                    fig_gantt.update_layout(height=600, margin=dict(t=20, b=20))
-                    st.plotly_chart(fig_gantt, use_container_width=True)
-
-            # --- TAB 3: SEBARAN WILAYAH & BIAYA ---
-            with tab3:
-                st.markdown("#### **Analisis Wilayah & Alokasi Anggaran**")
-                col_a, col_b = st.columns(2)
-                
-                with col_a:
-                    area_count = df.groupby(['Area/City', 'Status Progress']).size().reset_index(name='Jumlah')
-                    fig_area = px.bar(
-                        area_count, x='Area/City', y='Jumlah', color='Status Progress',
-                        title="Volume Pekerjaan per Kabupaten / Area",
-                        color_discrete_map={"Done (Selesai)": "#10b981", "Pending (On-Plan)": "#f59e0b"},
-                        template="plotly_white"
-                    )
-                    fig_area.update_layout(xaxis_tickangle=-45)
-                    st.plotly_chart(fig_area, use_container_width=True)
-                    
-                with col_b:
-                    area_budget = df.groupby('Area/City')['Biaya'].sum().reset_index()
-                    fig_pie = px.pie(
-                        area_budget, values='Biaya', names='Area/City', hole=0.4,
-                        title="Proporsi Anggaran Berdasarkan Wilayah",
-                        template="plotly_white"
-                    )
-                    fig_pie.update_traces(textposition='inside', textinfo='percent+label')
-                    st.plotly_chart(fig_pie, use_container_width=True)
-
-            # --- TAB 4: DATABASE & EXPORT EXCEL ---
-            with tab4:
-                st.markdown("#### **Master Data Rekapitulasi & Unduh Laporan**")
-                
-                df_display = df.copy()
-                df_display['Date Actual'] = df_display['Date Actual'].dt.strftime('%d-%b-%Y').fillna('Belum Selesai')
-                df_display['Plan Date'] = df_display['Plan Date'].dt.strftime('%d-%b-%Y').fillna('-')
-                df_display['Plan End'] = df_display['Plan End'].dt.strftime('%d-%b-%Y').fillna('-')
-                
-                cols = ['Site ID', 'Source Sheet', 'Area/City', 'PIC Engineer', 'Kategori', 'Status Progress', 'Plan Date', 'Date Actual', 'Biaya']
-                available_cols = [c for c in cols if c in df_display.columns]
-                
-                st.dataframe(df_display[available_cols], use_container_width=True, height=450)
-                
-                excel_bytes = convert_df_to_excel(df)
-                st.download_button(
-                    label="📥 Download Master Rekap Project ke Excel (.xlsx)",
-                    data=excel_bytes,
-                    file_name=f"Master_Plan_BCP_SPS_{datetime.now().strftime('%Y%m%d_%H%M')}.xlsx",
-                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                    type="primary"
+        # --- TAB 2: TIMELINE / GANTT CHART ---
+        with tab2:
+            st.markdown("#### **Jadwal Eksekusi Kerja 3 Bulan (90 Hari Kedepan)**")
+            df_plot = df.dropna(subset=['Plan Date']).sort_values('Plan Date')
+            
+            if not df_plot.empty:
+                fig_gantt = px.timeline(
+                    df_plot, x_start="Plan Date", x_end="Plan End", y="Site ID", color="Status Progress",
+                    hover_data=["Area/City", "PIC Engineer", "Source Sheet", "Biaya"],
+                    color_discrete_map={"Done (Selesai)": "#10b981", "Pending (On-Plan)": "#3b82f6"},
+                    template="plotly_white"
                 )
-    else:
-        st.warning("File yang diunggah terbaca kosong. Pastikan Anda mengunggah file Excel yang benar.")
+                fig_gantt.update_yaxes(autorange="reversed")
+                fig_gantt.update_layout(height=600, margin=dict(t=20, b=20))
+                st.plotly_chart(fig_gantt, use_container_width=True)
+
+        # --- TAB 3: SEBARAN WILAYAH & BIAYA ---
+        with tab3:
+            st.markdown("#### **Analisis Wilayah & Alokasi Anggaran**")
+            col_a, col_b = st.columns(2)
+            
+            with col_a:
+                area_count = df.groupby(['Area/City', 'Status Progress']).size().reset_index(name='Jumlah')
+                fig_area = px.bar(
+                    area_count, x='Area/City', y='Jumlah', color='Status Progress',
+                    title="Volume Pekerjaan per Kabupaten / Area",
+                    color_discrete_map={"Done (Selesai)": "#10b981", "Pending (On-Plan)": "#f59e0b"},
+                    template="plotly_white"
+                )
+                fig_area.update_layout(xaxis_tickangle=-45)
+                st.plotly_chart(fig_area, use_container_width=True)
+                
+            with col_b:
+                area_budget = df.groupby('Area/City')['Biaya'].sum().reset_index()
+                fig_pie = px.pie(
+                    area_budget, values='Biaya', names='Area/City', hole=0.4,
+                    title="Proporsi Anggaran Berdasarkan Wilayah",
+                    template="plotly_white"
+                )
+                fig_pie.update_traces(textposition='inside', textinfo='percent+label')
+                st.plotly_chart(fig_pie, use_container_width=True)
+
+        # --- TAB 4: DATABASE & EXPORT EXCEL ---
+        with tab4:
+            st.markdown("#### **Master Data Rekapitulasi & Unduh Laporan**")
+            
+            df_display = df.copy()
+            df_display['Date Actual'] = df_display['Date Actual'].dt.strftime('%d-%b-%Y').fillna('Belum Selesai')
+            df_display['Plan Date'] = df_display['Plan Date'].dt.strftime('%d-%b-%Y').fillna('-')
+            df_display['Plan End'] = df_display['Plan End'].dt.strftime('%d-%b-%Y').fillna('-')
+            
+            cols = ['Site ID', 'Source Sheet', 'Area/City', 'PIC Engineer', 'Kategori', 'Status Progress', 'Plan Date', 'Date Actual', 'Biaya']
+            available_cols = [c for c in cols if c in df_display.columns]
+            
+            st.dataframe(df_display[available_cols], use_container_width=True, height=450)
+            
+            excel_bytes = convert_df_to_excel(df)
+            st.download_button(
+                label="📥 Download Master Rekap Project ke Excel (.xlsx)",
+                data=excel_bytes,
+                file_name=f"Master_Plan_BCP_SPS_{datetime.now().strftime('%Y%m%d_%H%M')}.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                type="primary"
+            )
 else:
     st.info("👈 **Silakan unggah file Excel Anda melalui panel di sebelah kiri** untuk menampilkan seluruh analisis dan grafik secara otomatis.")
