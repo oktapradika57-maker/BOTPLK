@@ -46,7 +46,7 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # ==========================================
-# 2. CORE ENGINE: ROBUST MULTI-SHEET CLEANING
+# 2. CORE ENGINE: ROBUST DATA PROCESSOR
 # ==========================================
 @st.cache_data
 def load_and_process_data(file_bytes, auto_schedule=True):
@@ -66,7 +66,6 @@ def load_and_process_data(file_bytes, auto_schedule=True):
             df_bcp = df_bcp.rename(columns={k: v for k, v in bcp_map.items() if k in df_bcp.columns})
             df_bcp['Source Sheet'] = 'BCP Visit'
             
-            # Cleaning spesifik BCP
             df_bcp['Biaya'] = pd.to_numeric(df_bcp['Biaya'], errors='coerce')
             df_bcp['Plan Date'] = pd.to_datetime(df_bcp['Plan Date'], errors='coerce')
             df_bcp['Date Actual'] = pd.to_datetime(df_bcp['Date Actual'], errors='coerce')
@@ -86,14 +85,16 @@ def load_and_process_data(file_bytes, auto_schedule=True):
             df_sps['Kategori'] = 'SPS Visit'
             df_sps['Date Actual'] = pd.NaT
             
-            # Cleaning spesifik SPS
             df_sps['Biaya'] = pd.to_numeric(df_sps['Biaya'], errors='coerce')
             df_sps['Plan Date'] = pd.to_datetime(df_sps['Plan Date'], errors='coerce')
 
-        # Gabungkan Data Master secara aman setelah dibersihkan
+        # Gabungkan Data Master
         master_df = pd.concat([df_bcp, df_sps], ignore_index=True)
         
-        # Imputasi biaya kosong dengan median agar total RAB akurat (murni jutaan/ratusan ribu)
+        # Bersihkan baris kosong total jika ada
+        master_df = master_df.dropna(subset=['Site ID']).copy()
+
+        # Imputasi biaya kosong dengan median agar total RAB akurat
         median_cost = master_df['Biaya'].median() if not master_df['Biaya'].dropna().empty else 500000
         master_df['Biaya'] = master_df['Biaya'].fillna(median_cost).fillna(500000)
 
@@ -107,7 +108,7 @@ def load_and_process_data(file_bytes, auto_schedule=True):
         # Status Tracking Berdasarkan Tanggal Actual
         master_df['Status Progress'] = master_df['Date Actual'].apply(lambda x: 'Done (Selesai)' if pd.notnull(x) else 'Pending (On-Plan)')
 
-        # Penjadwalan Otomatis 90 Hari (3 Bulan) untuk Site yang Plan Date-nya Kosong
+        # Penjadwalan Otomatis 90 Hari (3 Bulan) untuk Site yang Kosong
         if auto_schedule:
             mask_empty = master_df['Plan Date'].isna()
             if mask_empty.sum() > 0:
@@ -120,7 +121,7 @@ def load_and_process_data(file_bytes, auto_schedule=True):
         return master_df
         
     except Exception as e:
-        st.error(f"Gagal memproses file: {e}")
+        st.error(f"Terjadi kesalahan saat memproses file: {e}")
         return None
 
 def convert_df_to_excel(df):
@@ -150,11 +151,15 @@ st.markdown("""
 </div>
 """, unsafe_allow_html=True)
 
-if uploaded_file:
-    file_bytes = uploaded_file.getvalue()
+if uploaded_file is not None:
+    try:
+        file_bytes = uploaded_file.getvalue()
+    except Exception:
+        file_bytes = uploaded_file.read()
+        
     df = load_and_process_data(file_bytes, auto_plan=auto_schedule)
     
-    if df is not None:
+    if df is not None and not df.empty:
         # Metrik Utama
         total_sites = len(df)
         done_sites = len(df[df['Status Progress'] == 'Done (Selesai)'])
